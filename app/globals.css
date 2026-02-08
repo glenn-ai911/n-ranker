@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+@theme {
+    --font-inter: "Inter", sans-serif;
+    --color-primary: #03c95c;
+    --item-bg-active: #e6f9ef;
+    --text-main: #1a202c;
+    --text-secondary: #718096;
+    --border-light: #edf2f7;
+}
+
+@layer base {
+    * {
+        @apply border-0 border-solid border-transparent;
+    }
+
+    body {
+        @apply bg-[#f8f9fa] font-inter text-[#1a202c];
+    }
+}
