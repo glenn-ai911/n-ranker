@@ -2,15 +2,8 @@ import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '../auth/[...nextauth]/route'
 import { prisma } from '@/lib/prisma'
-import bcrypt from 'bcryptjs'
 
-// API 키 암호화 함수 (간단한 bcrypt 사용)
-async function encrypt(text: string): Promise<string> {
-    const salt = await bcrypt.genSalt(10)
-    return bcrypt.hash(text, salt)
-}
-
-export async function GET() {
+export async function GET(req: Request) {
     const session = await getServerSession(authOptions)
     if (!session?.user) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -18,14 +11,21 @@ export async function GET() {
 
     const userId = (session.user as any).id
 
-    const apiConfig = await prisma.apiConfig.findUnique({
-        where: { userId },
-    })
+    try {
+        const config = await prisma.apiConfig.findUnique({
+            where: { userId },
+        })
 
-    return NextResponse.json({
-        hasConfig: !!apiConfig,
-        clientId: apiConfig?.naverClientId ? '설정됨' : null,
-    })
+        return NextResponse.json({
+            naverClientId: config?.naverClientId || '',
+            // 보안을 위해 Secret은 마스킹 처리하거나 빈 값으로 보냄 (수정 시에만 입력)
+            naverClientSecret: config?.naverClientSecret ? '********' : '',
+            hasSecret: !!config?.naverClientSecret
+        })
+    } catch (error) {
+        console.error('Error fetching settings:', error)
+        return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    }
 }
 
 export async function POST(req: Request) {
@@ -35,28 +35,41 @@ export async function POST(req: Request) {
     }
 
     const userId = (session.user as any).id
-    const { clientId, clientSecret } = await req.json()
 
-    if (!clientId || !clientSecret) {
-        return NextResponse.json({ error: 'Missing credentials' }, { status: 400 })
+    try {
+        const { naverClientId, naverClientSecret } = await req.json()
+
+        // 유효성 검사 (간단하게)
+        if (!naverClientId) {
+            return NextResponse.json({ error: 'Client ID is required' }, { status: 400 })
+        }
+
+        // 업데이트 데이터 구성
+        const data: any = {
+            naverClientId,
+            userId, // 연결을 위해 필요
+        }
+
+        // Secret이 제공된 경우에만 업데이트 (빈 값이면 기존 값 유지)
+        if (naverClientSecret && naverClientSecret !== '********') {
+            data.naverClientSecret = naverClientSecret
+        }
+
+        // upsert 사용 (있으면 업데이트, 없으면 생성)
+        const config = await prisma.apiConfig.upsert({
+            where: { userId },
+            update: data,
+            create: {
+                userId,
+                ...data,
+                // Secret이 없을 경우 필수 필드 에러 방지 (스키마 확인 필요하지만 보통 optional이나 빈 문자열)
+                naverClientSecret: data.naverClientSecret || ''
+            },
+        })
+
+        return NextResponse.json({ success: true })
+    } catch (error) {
+        console.error('Error saving settings:', error)
+        return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
     }
-
-    // API 키를 암호화하여 저장 (실제로는 더 강력한 암호화 필요)
-    const encryptedId = await encrypt(clientId)
-    const encryptedSecret = await encrypt(clientSecret)
-
-    await prisma.apiConfig.upsert({
-        where: { userId },
-        update: {
-            naverClientId: encryptedId,
-            naverClientSecret: encryptedSecret,
-        },
-        create: {
-            userId,
-            naverClientId: encryptedId,
-            naverClientSecret: encryptedSecret,
-        },
-    })
-
-    return NextResponse.json({ success: true })
 }

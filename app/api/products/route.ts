@@ -12,7 +12,9 @@ export async function GET(req: Request) {
     const products = await prisma.product.findMany({
         where: userId ? { userId } : undefined,
         include: {
-            keywords: true,
+            keywords: {
+                orderBy: { order: 'asc' }
+            },
             _count: {
                 select: { rankHistory: true },
             },
@@ -31,18 +33,24 @@ export async function POST(req: Request) {
     }
 
     const userId = (session.user as any).id
-    const { productId, productName } = await req.json()
+    const { productId, productName, keywords } = await req.json()
 
     if (!productId || !productName) {
         return NextResponse.json({ error: 'Missing fields' }, { status: 400 })
     }
 
     try {
+        // 상품과 키워드를 트랜잭션으로 함께 생성
         const product = await prisma.product.create({
             data: {
                 userId,
                 productId,
                 productName,
+                keywords: keywords && keywords.length > 0 ? {
+                    create: keywords.map((kw: string) => ({
+                        keyword: kw,
+                    }))
+                } : undefined,
             },
             include: {
                 keywords: true,
@@ -54,6 +62,7 @@ export async function POST(req: Request) {
         if (error.code === 'P2002') {
             return NextResponse.json({ error: 'Product already exists' }, { status: 400 })
         }
+        console.error('Error creating product:', error)
         return NextResponse.json({ error: 'Server error' }, { status: 500 })
     }
 }
