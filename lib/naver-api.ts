@@ -90,7 +90,7 @@ export async function fetchDataLabTrend(
     timeUnit: 'date' | 'week' | 'month',
     device: string,
     gender: string,
-    ages: string[],
+    ages: string[] = [],
     clientId: string,
     clientSecret: string
 ): Promise<any> {

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
-import { authOptions } from '../../auth/[...nextauth]/route'
+import { authOptions } from '@/app/api/auth/[...nextauth]/route'
 import { prisma } from '@/lib/prisma'
 import { fetchDataLabTrend } from '@/lib/naver-api'
 
@@ -38,7 +38,17 @@ export async function POST(req: Request) {
         const results = await Promise.all(
             keywords.map(async (kw) => {
                 try {
-                    const data = await fetchDataLabTrend(kw, startDate, endDate, clientId, clientSecret)
+                    const data = await fetchDataLabTrend(
+                        [{ groupName: kw, keywords: [kw] }],
+                        startDate,
+                        endDate,
+                        'date', // timeUnit
+                        '', // device (all)
+                        '', // gender (all)
+                        [], // ages (all)
+                        clientId,
+                        clientSecret
+                    )
                     return { keyword: kw, data }
                 } catch (e) {
                     console.error(`Error fetching trend for ${kw}:`, e)
