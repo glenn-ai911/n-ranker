@@ -317,9 +317,8 @@ function DashboardContent({ isReadOnly, products, ranksData, isLoading, onMutate
       }
 
       onMutate()
-    } catch (error) {
-      const errorData = await error.text()
-      console.error('Delete failed:', errorData)
+    } catch (error: unknown) {
+      console.error('Delete failed:', error)
       alert('상품 삭제에 실패했습니다.')
     }
   }
