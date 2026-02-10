@@ -20,12 +20,11 @@ export async function POST(req: Request) {
         const totalPages = Math.ceil(safeLimit / pageSize)
 
         // 네이버 데이터랩 내부 API 호출
-        const url = 'https://datalab.naver.com/shoppingInsight/getCategoryKeywordRank.naver'
+        const baseUrl = 'https://datalab.naver.com/shoppingInsight/getCategoryKeywordRank.naver'
 
         const headers = {
             'Referer': 'https://datalab.naver.com/shoppingInsight/sCategory.naver',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
             'X-Requested-With': 'XMLHttpRequest'
         }
 
@@ -47,10 +46,10 @@ export async function POST(req: Request) {
                 ages.forEach((age: string) => params.append('age', age))
             }
 
-            const response = await fetch(url, {
-                method: 'POST',
+            const response = await fetch(`${baseUrl}?${params.toString()}`, {
+                method: 'GET',
                 headers,
-                body: params.toString()
+                cache: 'no-store'
             })
 
             if (!response.ok) {

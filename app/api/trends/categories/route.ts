@@ -13,6 +13,20 @@ function normalizeCategories(data: any): CategoryItem[] {
     return []
 }
 
+function getParentId(item: any): string | null {
+    const keys = ['parentCid', 'parentId', 'pid', 'parentCategoryId', 'pCid', 'pId']
+    for (const key of keys) {
+        if (item?.[key] != null) return String(item[key])
+    }
+    return null
+}
+
+function normalizeItem(item: any) {
+    const cid = String(item?.cid ?? item?.catId ?? item?.categoryId ?? item?.id ?? item?.categoryCid ?? '')
+    const name = item?.catNm ?? item?.name ?? item?.categoryName ?? item?.value ?? ''
+    return { cid, name }
+}
+
 export async function GET(req: Request) {
     const session = await getServerSession(authOptions)
     if (!session?.user) {
@@ -35,85 +49,47 @@ export async function GET(req: Request) {
         'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
     }
 
-    // 네이버 데이터랩에서 사용하는 실제 요청 형식들 (여러 방식 시도)
-    const attempts: Array<{ url: string; init: RequestInit; label: string }> = [
-        {
-            label: 'POST with cid (form-urlencoded)',
-            url: baseUrl,
-            init: {
-                method: 'POST',
-                headers: {
-                    ...baseHeaders,
-                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                },
-                body: `cid=${encodeURIComponent(pid)}`
-            }
-        },
-        {
-            label: 'POST with cid (URLSearchParams)',
-            url: baseUrl,
-            init: {
-                method: 'POST',
-                headers: {
-                    ...baseHeaders,
-                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                },
-                body: new URLSearchParams({ cid: pid }).toString()
-            }
-        },
-        {
-            label: 'GET with cid query param',
-            url: `${baseUrl}?cid=${encodeURIComponent(pid)}`,
-            init: {
-                method: 'GET',
-                headers: baseHeaders
-            }
-        },
-    ]
+    const url = `${baseUrl}?cid=${encodeURIComponent(pid)}`
 
-    for (const attempt of attempts) {
-        try {
-            console.log(`[Categories API] Trying: ${attempt.label} for pid=${pid}`)
-            const res = await fetch(attempt.url, {
-                ...attempt.init,
-                cache: 'no-store',
-            })
-            
-            console.log(`[Categories API] Response status: ${res.status}`)
-            
-            if (!res.ok) {
-                console.log(`[Categories API] Non-OK status, skipping`)
-                continue
-            }
-            
-            const text = await res.text()
-            console.log(`[Categories API] Response length: ${text.length}, preview: ${text.substring(0, 200)}`)
-            
-            let data: any = null
-            try {
-                data = JSON.parse(text)
-            } catch {
-                console.log(`[Categories API] Failed to parse JSON`)
-                data = null
-            }
-            if (!data) continue
-            
-            const list = normalizeCategories(data)
-            if (list.length > 0) {
-                console.log(`[Categories API] Success! Found ${list.length} subcategories`)
-                // cid, catId 등 다양한 필드명 정규화
-                const normalized = list.map((item: any) => ({
-                    cid: String(item.cid || item.catId || item.id || ''),
-                    name: item.name || item.catNm || item.catName || '',
-                })).filter((item: any) => item.cid && item.name)
-                
-                return NextResponse.json(normalized)
-            }
-        } catch (error) {
-            console.error(`[Categories API] Error in ${attempt.label}:`, error)
+    try {
+        const res = await fetch(url, {
+            method: 'GET',
+            headers: baseHeaders,
+            cache: 'no-store',
+        })
+
+        if (!res.ok) {
+            return NextResponse.json([])
         }
+
+        const text = await res.text()
+        let data: any = null
+        try {
+            data = JSON.parse(text)
+        } catch {
+            data = null
+        }
+        if (!data) return NextResponse.json([])
+
+        let list = normalizeCategories(data)
+        if (list.length === 0) return NextResponse.json([])
+
+        const normalized = list.map(normalizeItem).filter((item: any) => item.cid && item.name)
+
+        // parent 정보가 있으면 부모 기준으로 필터링
+        const hasParent = list.some((item: any) => getParentId(item))
+        if (hasParent) {
+            const filtered = list
+                .filter((item: any) => getParentId(item) === pid)
+                .map(normalizeItem)
+                .filter((item: any) => item.cid && item.name)
+            return NextResponse.json(filtered)
+        }
+
+        return NextResponse.json(normalized)
+    } catch (error) {
+        console.error('Failed to fetch categories:', error)
     }
 
-    console.log(`[Categories API] All attempts failed for pid=${pid}`)
     return NextResponse.json([])
 }
