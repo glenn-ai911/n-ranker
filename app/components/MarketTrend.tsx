@@ -2,21 +2,10 @@
 
 import { useEffect, useState } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
+import { SHOPPING_CATEGORY_TREE, getSubCategories } from '@/lib/shopping-categories'
 
-// 네이버 쇼핑 카테고리 (대분류)
-const SHOPPING_CATEGORIES = [
-    { id: '50000000', name: '패션의류' },
-    { id: '50000001', name: '패션잡화' },
-    { id: '50000002', name: '화장품/미용' },
-    { id: '50000003', name: '디지털/가전' },
-    { id: '50000004', name: '가구/인테리어' },
-    { id: '50000005', name: '출산/육아' },
-    { id: '50000006', name: '식품' },
-    { id: '50000007', name: '스포츠/레저' },
-    { id: '50000008', name: '생활/건강' },
-    { id: '50000009', name: '여가/생활편의' },
-    { id: '50000010', name: '면세점' },
-]
+// 1차 카테고리는 하드코딩된 트리에서 가져옴
+const SHOPPING_CATEGORIES = SHOPPING_CATEGORY_TREE.map(c => ({ id: c.cid, name: c.name }))
 
 export function MarketTrendContent({ products }: { products: any[] }) {
     const [activeTab, setActiveTab] = useState<'shopping' | 'search'>('shopping')
@@ -74,65 +63,41 @@ function ShoppingTrendView() {
     const [loading, setLoading] = useState(false)
     const [trendData, setTrendData] = useState<any[]>([])
     const [topKeywords, setTopKeywords] = useState<any[]>([])
-    const [loadingCat, setLoadingCat] = useState(false)
+    const [loadingCat] = useState(false)
     const [keywordLimit, setKeywordLimit] = useState(500)
     const [keywordPage, setKeywordPage] = useState(1)
     const KEYWORDS_PER_PAGE = 20
 
-    // 하위 카테고리 가져오기
-    const fetchSubCategories = async (parentId: string) => {
-        try {
-            setLoadingCat(true)
-            const res = await fetch(`/api/trends/categories?pid=${parentId}`)
-            const data = await res.json()
-            if (Array.isArray(data)) {
-                return data.map((item: any) => ({
-                    cid: String(item.cid || item.id),
-                    name: item.name || item.catNm || item.text || ''
-                }))
-            }
-            return []
-        } catch (error) {
-            console.error('Failed to fetch subcategories:', error)
-            return []
-        } finally {
-            setLoadingCat(false)
-        }
-    }
-
     // 1차 카테고리 변경 시
-    const handleCategory1Change = async (value: string) => {
+    const handleCategory1Change = (value: string) => {
         setCategory1(value)
         setCategory2('')
         setCategory3('')
         setCategory4('')
+        setCategories2(getSubCategories(value))
         setCategories3([])
         setCategories4([])
-        const subs = await fetchSubCategories(value)
-        setCategories2(subs)
     }
 
     // 2차 카테고리 변경 시
-    const handleCategory2Change = async (value: string) => {
+    const handleCategory2Change = (value: string) => {
         setCategory2(value)
         setCategory3('')
         setCategory4('')
         setCategories4([])
         if (value) {
-            const subs = await fetchSubCategories(value)
-            setCategories3(subs)
+            setCategories3(getSubCategories(value))
         } else {
             setCategories3([])
         }
     }
 
     // 3차 카테고리 변경 시
-    const handleCategory3Change = async (value: string) => {
+    const handleCategory3Change = (value: string) => {
         setCategory3(value)
         setCategory4('')
         if (value) {
-            const subs = await fetchSubCategories(value)
-            setCategories4(subs)
+            setCategories4(getSubCategories(value))
         } else {
             setCategories4([])
         }
@@ -146,18 +111,9 @@ function ShoppingTrendView() {
         return category1
     }
 
+    // 초기 2차 카테고리 로드
     useEffect(() => {
-        let cancelled = false
-        const init = async () => {
-            const subs = await fetchSubCategories(category1)
-            if (!cancelled) {
-                setCategories2(subs)
-            }
-        }
-        init()
-        return () => {
-            cancelled = true
-        }
+        setCategories2(getSubCategories(category1))
     }, [])
 
     const fetchTrends = async () => {
