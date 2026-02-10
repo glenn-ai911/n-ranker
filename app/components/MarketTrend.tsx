@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 
 // 네이버 쇼핑 카테고리 (대분류)
@@ -68,11 +68,16 @@ function ShoppingTrendView() {
     const [category2, setCategory2] = useState('')
     const [categories3, setCategories3] = useState<{ cid: string, name: string }[]>([])
     const [category3, setCategory3] = useState('')
+    const [categories4, setCategories4] = useState<{ cid: string, name: string }[]>([])
+    const [category4, setCategory4] = useState('')
     const [period, setPeriod] = useState('1month')
     const [loading, setLoading] = useState(false)
     const [trendData, setTrendData] = useState<any[]>([])
     const [topKeywords, setTopKeywords] = useState<any[]>([])
     const [loadingCat, setLoadingCat] = useState(false)
+    const [keywordLimit, setKeywordLimit] = useState(500)
+    const [keywordPage, setKeywordPage] = useState(1)
+    const KEYWORDS_PER_PAGE = 20
 
     // 하위 카테고리 가져오기
     const fetchSubCategories = async (parentId: string) => {
@@ -82,8 +87,8 @@ function ShoppingTrendView() {
             const data = await res.json()
             if (Array.isArray(data)) {
                 return data.map((item: any) => ({
-                    cid: String(item.cid),
-                    name: item.name || item.catNm || ''
+                    cid: String(item.cid || item.id),
+                    name: item.name || item.catNm || item.text || ''
                 }))
             }
             return []
@@ -100,7 +105,9 @@ function ShoppingTrendView() {
         setCategory1(value)
         setCategory2('')
         setCategory3('')
+        setCategory4('')
         setCategories3([])
+        setCategories4([])
         const subs = await fetchSubCategories(value)
         setCategories2(subs)
     }
@@ -109,6 +116,8 @@ function ShoppingTrendView() {
     const handleCategory2Change = async (value: string) => {
         setCategory2(value)
         setCategory3('')
+        setCategory4('')
+        setCategories4([])
         if (value) {
             const subs = await fetchSubCategories(value)
             setCategories3(subs)
@@ -117,12 +126,39 @@ function ShoppingTrendView() {
         }
     }
 
+    // 3차 카테고리 변경 시
+    const handleCategory3Change = async (value: string) => {
+        setCategory3(value)
+        setCategory4('')
+        if (value) {
+            const subs = await fetchSubCategories(value)
+            setCategories4(subs)
+        } else {
+            setCategories4([])
+        }
+    }
+
     // 최종 선택된 카테고리 CID
     const getSelectedCid = () => {
+        if (category4) return category4
         if (category3) return category3
         if (category2) return category2
         return category1
     }
+
+    useEffect(() => {
+        let cancelled = false
+        const init = async () => {
+            const subs = await fetchSubCategories(category1)
+            if (!cancelled) {
+                setCategories2(subs)
+            }
+        }
+        init()
+        return () => {
+            cancelled = true
+        }
+    }, [])
 
     const fetchTrends = async () => {
         setLoading(true)
@@ -154,7 +190,7 @@ function ShoppingTrendView() {
                 setTrendData([])
             }
 
-            // 2. 인기 검색어 Top 20 조회
+            // 2. 인기 검색어 Top 100 조회
             const keywordsRes = await fetch('/api/trends/keywords', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -162,18 +198,20 @@ function ShoppingTrendView() {
                     cid: selectedCid,
                     startDate: startDate.toISOString().split('T')[0],
                     endDate: endDate.toISOString().split('T')[0],
-                    timeUnit: 'date'
+                    timeUnit: 'date',
+                    limit: 100 // 확실하게 100개 요청
                 })
             })
 
             const keywordsJson = await keywordsRes.json()
-            if (keywordsJson && Array.isArray(keywordsJson)) {
-                setTopKeywords(keywordsJson)
-            } else if (keywordsJson.ranks) {
+            if (keywordsJson?.ranks && Array.isArray(keywordsJson.ranks)) {
                 setTopKeywords(keywordsJson.ranks)
+            } else if (Array.isArray(keywordsJson)) {
+                setTopKeywords(keywordsJson)
             } else {
                 setTopKeywords([])
             }
+            setKeywordPage(1)
 
         } catch (error) {
             console.error(error)
@@ -224,12 +262,28 @@ function ShoppingTrendView() {
                         <label className="block text-sm font-bold text-[#64748b] mb-2">3차 분류</label>
                         <select
                             value={category3}
-                            onChange={(e) => setCategory3(e.target.value)}
+                            onChange={(e) => handleCategory3Change(e.target.value)}
                             disabled={categories3.length === 0}
                             className="w-full px-4 py-3 bg-[#f8fafc] border border-[#e2e8f0] rounded-xl font-bold text-[#0f172a] focus:outline-none focus:ring-2 focus:ring-[#03c95c]/20 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             <option value="">전체</option>
                             {categories3.map(c => (
+                                <option key={c.cid} value={c.cid}>{c.name}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {/* 4차 카테고리 */}
+                    <div className="min-w-[160px]">
+                        <label className="block text-sm font-bold text-[#64748b] mb-2">4차 분류</label>
+                        <select
+                            value={category4}
+                            onChange={(e) => setCategory4(e.target.value)}
+                            disabled={categories4.length === 0}
+                            className="w-full px-4 py-3 bg-[#f8fafc] border border-[#e2e8f0] rounded-xl font-bold text-[#0f172a] focus:outline-none focus:ring-2 focus:ring-[#03c95c]/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            <option value="">전체</option>
+                            {categories4.map(c => (
                                 <option key={c.cid} value={c.cid}>{c.name}</option>
                             ))}
                         </select>
@@ -250,6 +304,20 @@ function ShoppingTrendView() {
                                 </button>
                             ))}
                         </div>
+                    </div>
+
+                    {/* 인기 검색어 범위 */}
+                    <div className="min-w-[160px]">
+                        <label className="block text-sm font-bold text-[#64748b] mb-2">인기 검색어</label>
+                        <select
+                            value={keywordLimit}
+                            onChange={(e) => setKeywordLimit(Number(e.target.value))}
+                            className="w-full px-4 py-3 bg-[#f8fafc] border border-[#e2e8f0] rounded-xl font-bold text-[#0f172a] focus:outline-none focus:ring-2 focus:ring-[#03c95c]/20"
+                        >
+                            {[20, 50, 100, 200, 500].map((v) => (
+                                <option key={v} value={v}>TOP {v}</option>
+                            ))}
+                        </select>
                     </div>
 
                     <button
@@ -288,23 +356,54 @@ function ShoppingTrendView() {
 
                 {/* 인기 검색어 리스트 */}
                 <div className="bg-white p-8 rounded-3xl border border-[#e2e8f0] shadow-sm">
-                    <h3 className="text-xl font-black mb-6 flex items-center gap-2">
-                        <span className="material-icons text-[#f59e0b]">emoji_events</span>
-                        인기 검색어 TOP 20
-                    </h3>
-                    <div className="space-y-3 h-[400px] overflow-y-auto custom-scrollbar">
+                    <div className="flex items-center justify-between mb-6">
+                        <h3 className="text-xl font-black flex items-center gap-2">
+                            <span className="material-icons text-[#f59e0b]">emoji_events</span>
+                            인기 검색어 TOP {keywordLimit}
+                        </h3>
+                        {topKeywords.length > 0 && (
+                            <div className="flex items-center gap-2 text-sm">
+                                <span className="text-[#64748b] font-bold">
+                                    {keywordPage}/{Math.ceil(topKeywords.length / KEYWORDS_PER_PAGE)}
+                                </span>
+                                <button
+                                    onClick={() => setKeywordPage(Math.max(1, keywordPage - 1))}
+                                    disabled={keywordPage <= 1}
+                                    className="w-8 h-8 flex items-center justify-center rounded-lg border border-[#e2e8f0] hover:bg-[#f8fafc] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                >
+                                    <span className="material-icons text-sm">chevron_left</span>
+                                </button>
+                                <button
+                                    onClick={() => setKeywordPage(Math.min(Math.ceil(topKeywords.length / KEYWORDS_PER_PAGE), keywordPage + 1))}
+                                    disabled={keywordPage >= Math.ceil(topKeywords.length / KEYWORDS_PER_PAGE)}
+                                    className="w-8 h-8 flex items-center justify-center rounded-lg border border-[#e2e8f0] hover:bg-[#f8fafc] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                >
+                                    <span className="material-icons text-sm">chevron_right</span>
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                    <div className="space-y-1 h-[400px] overflow-y-auto custom-scrollbar">
                         {topKeywords.length > 0 ? (
-                            topKeywords.map((item: any, index: number) => (
-                                <div key={index} className="flex items-center gap-3 p-3 rounded-xl hover:bg-[#f8fafc] transition-colors group">
-                                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-black text-sm ${index < 3 ? 'bg-[#ffedcc] text-[#f59e0b]' : 'bg-[#f1f5f9] text-[#64748b]'
-                                        }`}>
-                                        {item.rank || index + 1}
-                                    </div>
-                                    <span className="font-bold text-[#0f172a] flex-1">{item.keyword}</span>
-                                    {/* 순위 변동 표시 (데이터가 있다면) */}
-                                    {/* <span className="text-xs font-bold text-red-500">NEW</span> */}
-                                </div>
-                            ))
+                            topKeywords
+                                .slice((keywordPage - 1) * KEYWORDS_PER_PAGE, keywordPage * KEYWORDS_PER_PAGE)
+                                .map((item: any, index: number) => {
+                                    const globalIndex = (keywordPage - 1) * KEYWORDS_PER_PAGE + index
+                                    return (
+                                        <div key={globalIndex} className="flex items-center gap-3 p-3 rounded-xl hover:bg-[#f8fafc] transition-colors group">
+                                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-black text-sm shrink-0 ${globalIndex < 3 ? 'bg-[#ffedcc] text-[#f59e0b]' : 'bg-[#f1f5f9] text-[#64748b]'
+                                                }`}>
+                                                {item.rank || globalIndex + 1}
+                                            </div>
+                                            <span className="font-bold text-[#0f172a] flex-1 truncate">{item.keyword}</span>
+                                            {item.linkCount != null && (
+                                                <span className="text-xs font-bold text-[#94a3b8] shrink-0">
+                                                    {Number(item.linkCount).toLocaleString()}
+                                                </span>
+                                            )}
+                                        </div>
+                                    )
+                                })
                         ) : (
                             <div className="h-full flex flex-col items-center justify-center text-[#94a3b8] gap-2">
                                 <span className="material-icons text-4xl opacity-20">search_off</span>

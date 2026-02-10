@@ -33,14 +33,25 @@ export default function Dashboard() {
   const router = useRouter()
   const [selectedMenu, setSelectedMenu] = useState('대시보드')
   const { theme, toggleTheme } = useTheme()
+  const userId = (session?.user as any)?.id as string | undefined
 
   // 상품 데이터 및 순위 데이터 fetch
-  const { data: products, mutate, isValidating } = useSWR('/api/products', fetcher, {
+  const productsKey = status === 'loading'
+    ? null
+    : userId
+      ? `/api/products?userId=${encodeURIComponent(userId)}`
+      : '/api/products'
+  const { data: products, mutate, isValidating } = useSWR(productsKey, fetcher, {
     refreshInterval: 0,
     revalidateOnFocus: false
   })
 
-  const { data: ranksData, mutate: mutateRanks } = useSWR('/api/ranks', fetcher, {
+  const ranksKey = status === 'loading'
+    ? null
+    : userId
+      ? `/api/ranks?userId=${encodeURIComponent(userId)}`
+      : '/api/ranks'
+  const { data: ranksData, mutate: mutateRanks } = useSWR(ranksKey, fetcher, {
     refreshInterval: 0,
     revalidateOnFocus: false
   })
@@ -249,13 +260,17 @@ function DashboardContent({ isReadOnly, products, ranksData, isLoading, onMutate
     // 모든 상품의 order 값을 새 index로 업데이트
     try {
       await Promise.all(
-        newOrder.map((product, index) =>
-          fetch(`/api/products/${product.id}`, {
+        newOrder.map(async (product, index) => {
+          const res = await fetch(`/api/products/${product.id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ order: index })
           })
-        )
+          if (!res.ok) {
+            const errorData = await res.json().catch(() => ({}))
+            throw new Error(errorData.error || `Failed to update order for ${product.id}`)
+          }
+        })
       )
       onMutate()
     } catch (error) {
@@ -340,17 +355,25 @@ function DashboardContent({ isReadOnly, products, ranksData, isLoading, onMutate
     // Index 기반으로 order 값 재할당 (swap 대신 새로운 index 값 부여)
     // 현재 상품에는 targetIndex를, target 상품에는 currentIndex를 할당
     try {
-      await fetch(`/api/products/${currentProduct.id}`, {
+      const res1 = await fetch(`/api/products/${currentProduct.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ order: targetIndex })
       })
+      if (!res1.ok) {
+        const errorData = await res1.json().catch(() => ({}))
+        throw new Error(errorData.error || `Failed to update order for ${currentProduct.id}`)
+      }
 
-      await fetch(`/api/products/${targetProduct.id}`, {
+      const res2 = await fetch(`/api/products/${targetProduct.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ order: currentIndex })
       })
+      if (!res2.ok) {
+        const errorData = await res2.json().catch(() => ({}))
+        throw new Error(errorData.error || `Failed to update order for ${targetProduct.id}`)
+      }
 
       onMutate()
     } catch (error) {
