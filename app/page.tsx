@@ -58,12 +58,12 @@ export default function Dashboard() {
       {/* Sidebar */}
       <aside className={`w-[280px] border-r fixed h-full z-50 ${theme === 'dark' ? 'bg-[#1e293b] border-[#334155] shadow-[4px_0_24px_rgba(0,0,0,0.2)]' : 'bg-white border-[#e2e8f0] shadow-[4px_0_24px_rgba(0,0,0,0.02)]'}`}>
         <div className="p-8 pb-4">
-          <div className="flex items-center gap-3 mb-1">
+          <button onClick={() => setSelectedMenu('대시보드')} className="flex items-center gap-3 mb-1 cursor-pointer hover:opacity-80 transition-opacity">
             <div className="w-10 h-10 bg-[#03c95c] rounded-xl flex items-center justify-center shadow-lg shadow-[#03c95c]/30">
               <span className="material-icons text-white text-2xl">bar_chart</span>
             </div>
             <h1 className={`text-2xl font-black tracking-tight ${theme === 'dark' ? 'text-white' : 'text-[#0f172a]'}`}>RANKER</h1>
-          </div>
+          </button>
           <p className="text-xs font-bold text-[#94a3b8] pl-1 tracking-wide">SMART ANALYTICS</p>
         </div>
 
@@ -466,16 +466,14 @@ function DashboardContent({ isReadOnly, products, ranksData, isLoading, onMutate
             <span className="w-1.5 h-5 bg-[#03c95c] rounded-full"></span>
             실시간 순위 현황
           </h3>
-          {!isReadOnly && (
-            <button
-              onClick={handleRefreshRanks}
-              disabled={isRefreshing}
-              className="flex items-center gap-2 px-4 py-2 bg-[#03c95c] hover:bg-[#02b350] text-white rounded-xl font-bold text-sm shadow-lg shadow-[#03c95c]/30 transition-all active:scale-95 disabled:opacity-50"
-            >
-              <span className={`material-icons text-lg ${isRefreshing ? 'animate-spin' : ''}`}>refresh</span>
-              {isRefreshing ? '갱신 중...' : '전체 순위 갱신'}
-            </button>
-          )}
+          <button
+            onClick={handleRefreshRanks}
+            disabled={isRefreshing}
+            className="flex items-center gap-2 px-4 py-2 bg-[#03c95c] hover:bg-[#02b350] text-white rounded-xl font-bold text-sm shadow-lg shadow-[#03c95c]/30 transition-all active:scale-95 disabled:opacity-50"
+          >
+            <span className={`material-icons text-lg ${isRefreshing ? 'animate-spin' : ''}`}>refresh</span>
+            {isRefreshing ? '갱신 중...' : '전체 순위 갱신'}
+          </button>
         </div>
 
         {isLoading ? (
@@ -484,48 +482,81 @@ function DashboardContent({ isReadOnly, products, ranksData, isLoading, onMutate
             <p>데이터를 불러오는 중입니다...</p>
           </div>
         ) : products.length > 0 ? (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext
-              items={products.sort((a, b) => (a.order || 0) - (b.order || 0)).map(p => p.id)}
-              strategy={rectSortingStrategy}
+          isReadOnly ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {products
+                .sort((a, b) => (a.order || 0) - (b.order || 0))
+                .map((product) => {
+                  const productRanks = ranksData?.products?.find((p: any) => p.productId === product.productId)
+                  return (
+                    <ProductCard
+                      key={product.id}
+                      name={product.productName}
+                      productId={product.productId}
+                      productDbId={product.id}
+                      isReadOnly={isReadOnly}
+                      onDelete={handleDeleteProduct}
+                      onUpdate={onMutate}
+                      onProductClick={onNavigateToRankAnalysis}
+                      order={product.order}
+                      keywords={product.keywords?.map((kw: any) => {
+                        const keywordRank = productRanks?.keywords?.find((k: any) => k.keyword === kw.keyword)
+                        const rank = keywordRank?.currentRank
+                        const delta = keywordRank?.delta
+                        return {
+                          keyword: kw.keyword,
+                          rank: rank != null ? rank : null,
+                          delta: delta != null ? delta : null,
+                        }
+                      }) || []}
+                    />
+                  )
+                })}
+            </div>
+          ) : (
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
             >
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                {products
-                  .sort((a, b) => (a.order || 0) - (b.order || 0))
-                  .map((product) => {
-                    const productRanks = ranksData?.products?.find((p: any) => p.productId === product.productId)
-                    return (
-                      <SortableProductCard
-                        key={product.id}
-                        id={product.id}
-                        name={product.productName}
-                        productId={product.productId}
-                        productDbId={product.id}
-                        isReadOnly={isReadOnly}
-                        onDelete={handleDeleteProduct}
-                        onUpdate={onMutate}
-                        onProductClick={onNavigateToRankAnalysis}
-                        order={product.order}
-                        keywords={product.keywords?.map((kw: any) => {
-                          const keywordRank = productRanks?.keywords?.find((k: any) => k.keyword === kw.keyword)
-                          const rank = keywordRank?.currentRank
-                          const delta = keywordRank?.delta
-                          return {
-                            keyword: kw.keyword,
-                            rank: rank != null ? rank : null,
-                            delta: delta != null ? delta : null,
-                          }
-                        }) || []}
-                      />
-                    )
-                  })}
-              </div>
-            </SortableContext>
-          </DndContext>
+              <SortableContext
+                items={products.sort((a, b) => (a.order || 0) - (b.order || 0)).map(p => p.id)}
+                strategy={rectSortingStrategy}
+              >
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                  {products
+                    .sort((a, b) => (a.order || 0) - (b.order || 0))
+                    .map((product) => {
+                      const productRanks = ranksData?.products?.find((p: any) => p.productId === product.productId)
+                      return (
+                        <SortableProductCard
+                          key={product.id}
+                          id={product.id}
+                          name={product.productName}
+                          productId={product.productId}
+                          productDbId={product.id}
+                          isReadOnly={isReadOnly}
+                          onDelete={handleDeleteProduct}
+                          onUpdate={onMutate}
+                          onProductClick={onNavigateToRankAnalysis}
+                          order={product.order}
+                          keywords={product.keywords?.map((kw: any) => {
+                            const keywordRank = productRanks?.keywords?.find((k: any) => k.keyword === kw.keyword)
+                            const rank = keywordRank?.currentRank
+                            const delta = keywordRank?.delta
+                            return {
+                              keyword: kw.keyword,
+                              rank: rank != null ? rank : null,
+                              delta: delta != null ? delta : null,
+                            }
+                          }) || []}
+                        />
+                      )
+                    })}
+                </div>
+              </SortableContext>
+            </DndContext>
+          )
         ) : (
           <div className="p-16 text-center bg-white rounded-3xl ring-1 ring-[#e2e8f0]">
             <div className="w-20 h-20 bg-[#f1f5f9] rounded-full flex items-center justify-center mx-auto mb-6">

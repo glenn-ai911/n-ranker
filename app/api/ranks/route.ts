@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '../auth/[...nextauth]/route'
 import { prisma } from '@/lib/prisma'
+import { searchProductRank } from '@/lib/naver-api'
 
 export async function GET(req: Request) {
     const session = await getServerSession(authOptions)
@@ -116,69 +117,28 @@ export async function GET(req: Request) {
     }
 }
 
-// 네이버 쇼핑에서 상품 순위 조회
-async function getNaverShoppingRank(
-    keyword: string,
-    productId: string,
-    clientId: string,
-    clientSecret: string
-): Promise<number | null> {
-    try {
-        // 네이버 쇼핑 검색 API 호출
-        const response = await fetch(
-            `https://openapi.naver.com/v1/search/shop.json?query=${encodeURIComponent(keyword)}&display=100&sort=sim`,
-            {
-                headers: {
-                    'X-Naver-Client-Id': clientId,
-                    'X-Naver-Client-Secret': clientSecret,
-                },
-            }
-        )
-
-        if (!response.ok) {
-            console.error(`Naver API error: ${response.status}`)
-            return null
-        }
-
-        const data = await response.json()
-        const items = data.items || []
-
-        // 상품 ID로 순위 찾기
-        for (let i = 0; i < items.length; i++) {
-            const item = items[i]
-            // 네이버 쇼핑의 productId 또는 link에서 ID 추출하여 비교
-            // link 형태: https://search.shopping.naver.com/gate.nhn?id=상품ID
-            const link = item.link || ''
-            const mallProductId = item.productId || ''
-
-            if (link.includes(productId) || mallProductId === productId ||
-                item.mallProductId === productId) {
-                return i + 1 // 순위는 1부터 시작
-            }
-        }
-
-        // 100위 내에 없으면 null 반환
-        return null
-    } catch (error) {
-        console.error('Error fetching Naver shopping rank:', error)
-        return null
-    }
-}
-
-// 순위 갱신 (수동 트리거)
+// 순위 갱신 (수동 트리거) - 비회원도 사용 가능
 export async function POST(req: Request) {
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const userId = (session?.user as any)?.id
 
     try {
-        const userId = (session.user as any).id
-
-        // API 설정 가져오기
-        const apiConfig = await prisma.apiConfig.findUnique({
-            where: { userId }
-        })
+        // API 설정 가져오기 (로그인 사용자 우선, 비로그인 시 첫 번째 설정 사용)
+        let apiConfig
+        if (userId) {
+            apiConfig = await prisma.apiConfig.findUnique({
+                where: { userId }
+            })
+        }
+        if (!apiConfig) {
+            // 비회원이거나 로그인 사용자에게 API 키가 없는 경우, 첫 번째 설정 사용
+            apiConfig = await prisma.apiConfig.findFirst({
+                where: {
+                    naverClientId: { not: '' },
+                    naverClientSecret: { not: '' }
+                }
+            })
+        }
 
         if (!apiConfig?.naverClientId || !apiConfig?.naverClientSecret) {
             return NextResponse.json({
@@ -186,9 +146,9 @@ export async function POST(req: Request) {
             }, { status: 400 })
         }
 
-        // 해당 사용자의 모든 상품 조회
+        // 모든 상품 조회 (userId가 있으면 해당 사용자 상품, 없으면 전체)
         const products = await prisma.product.findMany({
-            where: { userId },
+            where: userId ? { userId } : {},
             include: { keywords: true }
         })
 
@@ -202,8 +162,8 @@ export async function POST(req: Request) {
 
         for (const product of products) {
             for (const keyword of product.keywords) {
-                // 네이버 쇼핑 API로 실제 순위 조회
-                const rank = await getNaverShoppingRank(
+                // 1000위까지 조회 가능한 searchProductRank 사용
+                const rank = await searchProductRank(
                     keyword.keyword,
                     product.productId,
                     apiConfig.naverClientId,

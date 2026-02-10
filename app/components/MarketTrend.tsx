@@ -63,11 +63,66 @@ export function MarketTrendContent({ products }: { products: any[] }) {
 }
 
 function ShoppingTrendView() {
-    const [category, setCategory] = useState(SHOPPING_CATEGORIES[0].id)
+    const [category1, setCategory1] = useState(SHOPPING_CATEGORIES[0].id)
+    const [categories2, setCategories2] = useState<{ cid: string, name: string }[]>([])
+    const [category2, setCategory2] = useState('')
+    const [categories3, setCategories3] = useState<{ cid: string, name: string }[]>([])
+    const [category3, setCategory3] = useState('')
     const [period, setPeriod] = useState('1month')
     const [loading, setLoading] = useState(false)
     const [trendData, setTrendData] = useState<any[]>([])
     const [topKeywords, setTopKeywords] = useState<any[]>([])
+    const [loadingCat, setLoadingCat] = useState(false)
+
+    // 하위 카테고리 가져오기
+    const fetchSubCategories = async (parentId: string) => {
+        try {
+            setLoadingCat(true)
+            const res = await fetch(`/api/trends/categories?pid=${parentId}`)
+            const data = await res.json()
+            if (Array.isArray(data)) {
+                return data.map((item: any) => ({
+                    cid: String(item.cid),
+                    name: item.name || item.catNm || ''
+                }))
+            }
+            return []
+        } catch (error) {
+            console.error('Failed to fetch subcategories:', error)
+            return []
+        } finally {
+            setLoadingCat(false)
+        }
+    }
+
+    // 1차 카테고리 변경 시
+    const handleCategory1Change = async (value: string) => {
+        setCategory1(value)
+        setCategory2('')
+        setCategory3('')
+        setCategories3([])
+        const subs = await fetchSubCategories(value)
+        setCategories2(subs)
+    }
+
+    // 2차 카테고리 변경 시
+    const handleCategory2Change = async (value: string) => {
+        setCategory2(value)
+        setCategory3('')
+        if (value) {
+            const subs = await fetchSubCategories(value)
+            setCategories3(subs)
+        } else {
+            setCategories3([])
+        }
+    }
+
+    // 최종 선택된 카테고리 CID
+    const getSelectedCid = () => {
+        if (category3) return category3
+        if (category2) return category2
+        return category1
+    }
 
     const fetchTrends = async () => {
         setLoading(true)
@@ -78,12 +133,14 @@ function ShoppingTrendView() {
             else if (period === '3month') startDate.setMonth(endDate.getMonth() - 3)
             else startDate.setFullYear(endDate.getFullYear() - 1)
 
+            const selectedCid = getSelectedCid()
+
             // 1. 쇼핑 클릭 트렌드 조회
             const trendRes = await fetch('/api/trends/shopping', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    categoryCid: category,
+                    categoryCid: selectedCid,
                     startDate: startDate.toISOString().split('T')[0],
                     endDate: endDate.toISOString().split('T')[0],
                     timeUnit: 'date'
@@ -102,7 +159,7 @@ function ShoppingTrendView() {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    cid: category,
+                    cid: selectedCid,
                     startDate: startDate.toISOString().split('T')[0],
                     endDate: endDate.toISOString().split('T')[0],
                     timeUnit: 'date'
@@ -111,8 +168,6 @@ function ShoppingTrendView() {
 
             const keywordsJson = await keywordsRes.json()
             if (keywordsJson && Array.isArray(keywordsJson)) {
-                // 데이터 프록시 API 응답 구조에 맞게 처리 필요
-                // 네이버 데이터랩 응답 구조: [ { rank: 1, keyword: '...' }, ... ]
                 setTopKeywords(keywordsJson)
             } else if (keywordsJson.ranks) {
                 setTopKeywords(keywordsJson.ranks)
@@ -132,11 +187,12 @@ function ShoppingTrendView() {
         <div className="space-y-6">
             <div className="bg-white p-6 rounded-3xl border border-[#e2e8f0] shadow-sm">
                 <div className="flex flex-wrap gap-4 items-end">
-                    <div className="flex-1 min-w-[200px]">
-                        <label className="block text-sm font-bold text-[#64748b] mb-2">카테고리</label>
+                    {/* 1차 카테고리 */}
+                    <div className="min-w-[160px]">
+                        <label className="block text-sm font-bold text-[#64748b] mb-2">분야</label>
                         <select
-                            value={category}
-                            onChange={(e) => setCategory(e.target.value)}
+                            value={category1}
+                            onChange={(e) => handleCategory1Change(e.target.value)}
                             className="w-full px-4 py-3 bg-[#f8fafc] border border-[#e2e8f0] rounded-xl font-bold text-[#0f172a] focus:outline-none focus:ring-2 focus:ring-[#03c95c]/20"
                         >
                             {SHOPPING_CATEGORIES.map(c => (
@@ -145,7 +201,42 @@ function ShoppingTrendView() {
                         </select>
                     </div>
 
-                    <div className="flex-1 min-w-[200px]">
+                    {/* 2차 카테고리 */}
+                    <div className="min-w-[160px]">
+                        <label className="block text-sm font-bold text-[#64748b] mb-2">
+                            2차 분류 {loadingCat && <span className="text-xs text-[#94a3b8]">로딩...</span>}
+                        </label>
+                        <select
+                            value={category2}
+                            onChange={(e) => handleCategory2Change(e.target.value)}
+                            disabled={categories2.length === 0}
+                            className="w-full px-4 py-3 bg-[#f8fafc] border border-[#e2e8f0] rounded-xl font-bold text-[#0f172a] focus:outline-none focus:ring-2 focus:ring-[#03c95c]/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            <option value="">전체</option>
+                            {categories2.map(c => (
+                                <option key={c.cid} value={c.cid}>{c.name}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {/* 3차 카테고리 */}
+                    <div className="min-w-[160px]">
+                        <label className="block text-sm font-bold text-[#64748b] mb-2">3차 분류</label>
+                        <select
+                            value={category3}
+                            onChange={(e) => setCategory3(e.target.value)}
+                            disabled={categories3.length === 0}
+                            className="w-full px-4 py-3 bg-[#f8fafc] border border-[#e2e8f0] rounded-xl font-bold text-[#0f172a] focus:outline-none focus:ring-2 focus:ring-[#03c95c]/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            <option value="">전체</option>
+                            {categories3.map(c => (
+                                <option key={c.cid} value={c.cid}>{c.name}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {/* 기간 */}
+                    <div className="min-w-[200px]">
                         <label className="block text-sm font-bold text-[#64748b] mb-2">기간</label>
                         <div className="flex bg-[#f8fafc] p-1 rounded-xl border border-[#e2e8f0]">
                             {['1month', '3month', '1year'].map(p => (

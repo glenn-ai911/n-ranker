@@ -9,25 +9,31 @@ export async function POST(req: Request) {
     console.log('[순위 갱신] API 호출됨')
 
     const session = await getServerSession(authOptions)
-    if (!session?.user) {
-        console.log('[순위 갱신] 인증 실패')
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const userId = (session?.user as any)?.id
+    console.log('[순위 갱신] 사용자 ID:', userId || '비회원')
+
+    // API 설정 조회 (로그인 사용자 우선, 비로그인 시 첫 번째 설정 사용)
+    let apiConfig
+    if (userId) {
+        apiConfig = await prisma.apiConfig.findUnique({
+            where: { userId },
+        })
     }
-
-    const userId = (session.user as any).id
-    console.log('[순위 갱신] 사용자 ID:', userId)
-
-    // API 설정 조회
-    const apiConfig = await prisma.apiConfig.findUnique({
-        where: { userId },
-    })
+    if (!apiConfig) {
+        apiConfig = await prisma.apiConfig.findFirst({
+            where: {
+                naverClientId: { not: '' },
+                naverClientSecret: { not: '' }
+            }
+        })
+    }
 
     if (!apiConfig?.naverClientId || !apiConfig?.naverClientSecret) {
         console.log('[순위 갱신] API 키 미설정')
         return NextResponse.json({ error: 'API keys not configured' }, { status: 400 })
     }
 
-    // DB에 저장된 API 키 사용 (환경 변수보다 우선)
+    // DB에 저장된 API 키 사용
     const clientId = apiConfig.naverClientId
     const clientSecret = apiConfig.naverClientSecret
 
@@ -35,7 +41,7 @@ export async function POST(req: Request) {
 
     // 모든 상품 및 키워드 조회
     const products = await prisma.product.findMany({
-        where: { userId },
+        where: userId ? { userId } : {},
         include: { keywords: true },
     })
 
