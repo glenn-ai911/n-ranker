@@ -421,10 +421,42 @@ function DashboardContent({ isReadOnly, products, ranksData, isLoading, onMutate
 
       {/* Stats Cards */}
       <div className="grid grid-cols-4 gap-6">
-        <StatCard title="등록된 상품" value={products.length} unit="개" icon="inventory_2" />
-        <StatCard title="추적 키워드" value={products.reduce((acc, p) => acc + (p.keywords?.length || 0), 0)} unit="개" icon="tag" />
-        <StatCard title="순위권 진입" value={ranksData?.ranks?.filter((r: any) => r.currentRank <= 10).length || 0} unit="개" icon="emoji_events" color="text-[#03c95c]" />
-        <StatCard title="평균 순위" value={ranksData?.averageRank || 0} unit="위" icon="analytics" />
+        <StatCard
+          title="등록된 상품"
+          value={products.length}
+          unit="개"
+          icon="inventory_2"
+          iconColor="text-blue-500"
+          bgColor="bg-blue-50"
+        />
+        <StatCard
+          title="추적 키워드"
+          value={products.reduce((acc, p) => acc + (p.keywords?.length || 0), 0)}
+          unit="개"
+          icon="tag"
+          iconColor="text-purple-500"
+          bgColor="bg-purple-50"
+        />
+        <StatCard
+          title="순위 상승"
+          value={ranksData?.products?.reduce((acc: number, p: any) => {
+            return acc + (p.keywords?.filter((k: any) => (k.delta || 0) > 0).length || 0)
+          }, 0) || 0}
+          unit="개"
+          icon="trending_up"
+          iconColor="text-[#ff4d4d]" // Red for increase
+          bgColor="bg-[#fff0f0]"
+        />
+        <StatCard
+          title="순위 하락"
+          value={ranksData?.products?.reduce((acc: number, p: any) => {
+            return acc + (p.keywords?.filter((k: any) => (k.delta || 0) < 0).length || 0)
+          }, 0) || 0}
+          unit="개"
+          icon="trending_down"
+          iconColor="text-blue-500" // Blue for decrease
+          bgColor="bg-blue-50"
+        />
       </div>
 
       {/* Add Product Form */}
@@ -594,19 +626,20 @@ function DashboardContent({ isReadOnly, products, ranksData, isLoading, onMutate
   )
 }
 
-function StatCard({ title, value, unit, icon, color = 'text-[#0f172a]' }: any) {
+function StatCard({ title, value, unit, icon, iconColor = 'text-[#0f172a]', bgColor = 'bg-[#f8fafc]' }: any) {
   return (
     <div className="bg-white p-6 rounded-3xl shadow-[0_2px_15px_-3px_rgba(0,0,0,0.07),0_10px_20px_-2px_rgba(0,0,0,0.04)] ring-1 ring-[#e2e8f0] hover:translate-y-[-2px] transition-transform duration-300">
-      <div className="flex items-start justify-between mb-4">
-        <div className="p-3 bg-[#f8fafc] rounded-2xl">
-          <span className={`material-icons ${color} text-xl`}>{icon}</span>
+      <div className="flex items-center gap-4">
+        <div className={`p-3.5 rounded-2xl ${bgColor}`}>
+          <span className={`material-icons ${iconColor} text-2xl`}>{icon}</span>
         </div>
-        <span className="text-[12px] font-bold text-[#03c95c] bg-[#e6f9ef] px-2.5 py-1 rounded-full">+12%</span>
-      </div>
-      <p className="text-[#64748b] text-[13px] font-bold mb-1 ml-1">{title}</p>
-      <div className="flex items-baseline gap-1">
-        <h3 className="text-[32px] font-black text-[#0f172a] tracking-tight">{value}</h3>
-        <span className="text-[#94a3b8] font-bold">{unit}</span>
+        <div>
+          <p className="text-[#64748b] text-[13px] font-bold mb-1">{title}</p>
+          <div className="flex items-baseline gap-1">
+            <h3 className="text-[28px] font-black text-[#0f172a] tracking-tight">{value}</h3>
+            <span className="text-[#94a3b8] font-bold text-sm">{unit}</span>
+          </div>
+        </div>
       </div>
     </div>
   )

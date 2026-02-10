@@ -285,22 +285,19 @@ export function ProductCard({ name, productId, productDbId, isReadOnly, onDelete
             )}
 
             {/* Header */}
-            <div className="flex items-start justify-between mb-4 pl-6">
+            <div className="flex items-start justify-between mb-4 pl-2">
                 <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <div className="w-10 h-10 rounded-xl bg-[#e6f9ef] dark:bg-[#334155] flex items-center justify-center shrink-0">
-                        <span className="material-icons text-[#03c95c] text-xl">inventory_2</span>
-                    </div>
                     <div className="min-w-0 flex-1">
                         {isEditing ? (
                             <input
                                 type="text"
                                 value={editName}
                                 onChange={(e) => setEditName(e.target.value)}
-                                className="w-full font-black text-[14px] text-[#0f172a] dark:text-white bg-[#f1f5f9] dark:bg-[#475569] rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-[#03c95c]"
+                                className="w-full font-black text-[16px] text-[#0f172a] dark:text-white bg-[#f1f5f9] dark:bg-[#475569] rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-[#03c95c]"
                             />
                         ) : (
                             <h4
-                                className={`font-black text-[14px] truncate mb-0.5 ${onProductClick ? 'text-[#03c95c] hover:underline cursor-pointer' : 'text-[#0f172a] dark:text-white'}`}
+                                className={`font-black text-[16px] truncate mb-0.5 ${onProductClick ? 'text-[#0f172a] hover:text-[#03c95c] hover:underline cursor-pointer' : 'text-[#0f172a] dark:text-white'}`}
                                 title={name}
                                 onClick={onProductClick}
                             >
@@ -312,10 +309,10 @@ export function ProductCard({ name, productId, productDbId, isReadOnly, onDelete
                                 type="text"
                                 value={editId}
                                 onChange={(e) => setEditId(e.target.value)}
-                                className="w-full text-[11px] text-[#64748b] bg-[#f1f5f9] dark:bg-[#475569] rounded-lg px-2 py-1 mt-1 focus:outline-none focus:ring-2 focus:ring-[#03c95c]"
+                                className="w-full text-[12px] text-[#64748b] bg-[#f1f5f9] dark:bg-[#475569] rounded-lg px-2 py-1 mt-1 focus:outline-none focus:ring-2 focus:ring-[#03c95c]"
                             />
                         ) : (
-                            <p className="text-[11px] text-[#94a3b8] font-bold truncate" title={productId}>
+                            <p className="text-[12px] text-[#94a3b8] font-bold truncate" title={productId}>
                                 ID: {productId}
                             </p>
                         )}
