@@ -4,22 +4,20 @@ import { authOptions } from '../auth/[...nextauth]/route'
 import { prisma } from '@/lib/prisma'
 import { searchProductRank } from '@/lib/naver-api'
 
-export async function GET(req: Request) {
-    const session = await getServerSession(authOptions)
+// 캐싱 비활성화 - 로그인 여부에 관계없이 항상 최신 데이터 반환
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
 
+export async function GET(req: Request) {
     // 로그인하지 않은 경우에도 읽기 전용으로 데이터 제공
     const { searchParams } = new URL(req.url)
-    const userId = searchParams.get('userId')
     const productId = searchParams.get('productId')
 
     try {
         // 특정 상품의 순위 조회
         if (productId) {
             const product = await prisma.product.findFirst({
-                where: {
-                    productId,
-                    ...(userId ? { userId } : {})
-                },
+                where: { productId },
                 include: {
                     keywords: true,
                     rankHistory: {
@@ -70,7 +68,6 @@ export async function GET(req: Request) {
 
         // 전체 상품의 최신 순위 조회
         const products = await prisma.product.findMany({
-            where: userId ? { userId } : {},
             include: {
                 keywords: true,
                 rankHistory: {
@@ -118,7 +115,7 @@ export async function GET(req: Request) {
 }
 
 // 순위 갱신 (수동 트리거) - 비회원도 사용 가능
-export async function POST(req: Request) {
+export async function POST(_req: Request) {
     const session = await getServerSession(authOptions)
     const userId = (session?.user as any)?.id
 
@@ -146,50 +143,100 @@ export async function POST(req: Request) {
             }, { status: 400 })
         }
 
-        // 모든 상품 조회 (userId가 있으면 해당 사용자 상품, 없으면 전체)
+        // 공용 대시보드 기준으로 전체 상품 순위를 갱신한다.
         const products = await prisma.product.findMany({
-            where: userId ? { userId } : {},
-            include: { keywords: true }
+            include: { keywords: true },
         })
 
         if (products.length === 0) {
             return NextResponse.json({ error: '등록된 상품이 없습니다' }, { status: 400 })
         }
 
+        const rankTasks = products.flatMap((product) =>
+            product.keywords.map((keyword) => ({
+                productId: product.id,
+                productNumber: product.productId,
+                keyword: keyword.keyword,
+            }))
+        )
+
+        const envConcurrency = Number.parseInt(process.env.RANK_REFRESH_CONCURRENCY || '4', 10)
+        const concurrency = Number.isFinite(envConcurrency) && envConcurrency > 0
+            ? Math.min(envConcurrency, 10)
+            : 4
+        const pageDelayMs = Math.max(
+            0,
+            Number.parseInt(process.env.RANK_PAGE_DELAY_MS || '30', 10) || 0
+        )
         const now = new Date()
-        let updatedCount = 0
+        const startedAt = Date.now()
+        let pointer = 0
         let successCount = 0
+        let failedCount = 0
+        const rankWrites: { productId: string; keyword: string; rank: number }[] = []
 
-        for (const product of products) {
-            for (const keyword of product.keywords) {
-                // 1000위까지 조회 가능한 searchProductRank 사용
-                const rank = await searchProductRank(
-                    keyword.keyword,
-                    product.productId,
-                    apiConfig.naverClientId,
-                    apiConfig.naverClientSecret
-                )
+        const worker = async () => {
+            const localWrites: { productId: string; keyword: string; rank: number }[] = []
+            let localSuccess = 0
+            let localFailed = 0
 
-                if (rank !== null) {
-                    await prisma.rankHistory.create({
-                        data: {
-                            productId: product.id,
-                            keyword: keyword.keyword,
+            while (true) {
+                const index = pointer++
+                const task = rankTasks[index]
+                if (!task) break
+
+                try {
+                    const rank = await searchProductRank(
+                        task.keyword,
+                        task.productNumber,
+                        apiConfig.naverClientId,
+                        apiConfig.naverClientSecret,
+                        { pageDelayMs }
+                    )
+
+                    if (rank !== null) {
+                        localWrites.push({
+                            productId: task.productId,
+                            keyword: task.keyword,
                             rank,
-                        }
-                    })
-                    successCount++
+                        })
+                        localSuccess++
+                    } else {
+                        localFailed++
+                    }
+                } catch (error) {
+                    console.error(`[순위 갱신 에러] ${task.productNumber} - ${task.keyword}:`, error)
+                    localFailed++
                 }
-                updatedCount++
+            }
 
-                // API 호출 간 딜레이 (rate limit 방지)
-                await new Promise(resolve => setTimeout(resolve, 100))
+            rankWrites.push(...localWrites)
+            successCount += localSuccess
+            failedCount += localFailed
+        }
+
+        const workerCount = Math.max(1, Math.min(concurrency, rankTasks.length || 1))
+        await Promise.all(Array.from({ length: workerCount }, () => worker()))
+
+        if (rankWrites.length > 0) {
+            const BATCH_SIZE = 200
+            for (let i = 0; i < rankWrites.length; i += BATCH_SIZE) {
+                const batch = rankWrites.slice(i, i + BATCH_SIZE)
+                await prisma.rankHistory.createMany({
+                    data: batch,
+                })
             }
         }
+
+        const updatedCount = rankTasks.length
 
         return NextResponse.json({
             success: true,
             message: `${products.length}개 상품, ${successCount}/${updatedCount}개 키워드 순위 갱신 완료`,
+            totalTasks: rankTasks.length,
+            successCount,
+            failedCount,
+            durationMs: Date.now() - startedAt,
             updatedAt: now.toISOString()
         })
     } catch (error) {

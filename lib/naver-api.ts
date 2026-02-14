@@ -1,22 +1,29 @@
 // 네이버 API 클라이언트 라이브러리
 
+type SearchProductRankOptions = {
+    maxPages?: number
+    displayCount?: number
+    pageDelayMs?: number
+}
+
 export async function searchProductRank(
     keyword: string,
     productId: string,
     clientId: string,
-    clientSecret: string
+    clientSecret: string,
+    options: SearchProductRankOptions = {}
 ): Promise<number | null> {
     try {
         const encodedKeyword = encodeURIComponent(keyword)
         const targetId = String(productId)
+        const maxPages = options.maxPages ?? 10
+        const displayCount = options.displayCount ?? 100
+        const pageDelayMs = options.pageDelayMs ?? 100
 
         console.log(`[순위 조회] 키워드: ${keyword}, 상품ID: ${productId}`)
 
         // 네이버 쇼핑 API는 start=1~1000, display=1~100 지원
         // 1000위까지 조회하려면 10번 페이징 필요
-        const maxPages = 10  // 100개 * 10페이지 = 1000개
-        const displayCount = 100
-
         for (let page = 0; page < maxPages; page++) {
             const start = page * displayCount + 1
             const url = `https://openapi.naver.com/v1/search/shop.json?query=${encodedKeyword}&display=${displayCount}&start=${start}&sort=sim`
@@ -71,7 +78,7 @@ export async function searchProductRank(
             }
 
             // API 호출 간격 (Rate limit 방지)
-            await new Promise(resolve => setTimeout(resolve, 100))
+            await new Promise(resolve => setTimeout(resolve, pageDelayMs))
         }
 
         console.log(`[순위 조회] 상품을 1000위 안에서 찾을 수 없음`)
