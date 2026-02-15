@@ -1,7 +1,7 @@
 // 순위 분석 페이지 컴포넌트
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 
 export function RankAnalysisContent({ ranksData, products }: { ranksData: any, products: any[] }) {
@@ -9,9 +9,11 @@ export function RankAnalysisContent({ ranksData, products }: { ranksData: any, p
     const [selectedProductId, setSelectedProductId] = useState<string | null>(null)
 
     // 초기 선택 상품 설정
-    if (!selectedProductId && products.length > 0) {
-        setSelectedProductId(products[0].id)
-    }
+    useEffect(() => {
+        if (!selectedProductId && products.length > 0) {
+            setSelectedProductId(products[0].id)
+        }
+    }, [selectedProductId, products])
 
     // 선택된 상품 찾기
     const selectedProduct = products.find(p => p.id === selectedProductId)
@@ -20,25 +22,48 @@ export function RankAnalysisContent({ ranksData, products }: { ranksData: any, p
     const chartData = useMemo(() => {
         if (!ranksData?.products || !selectedProduct) return []
 
-        const dataMap = new Map()
+        const dataMap = new Map<string, Record<string, string | number | null>>()
         // DB id가 아닌 상품 productId로 매칭해야 함
         const targetProduct = ranksData.products.find((p: any) => p.productId === selectedProduct.productId)
 
         if (targetProduct) {
             targetProduct.keywords?.forEach((kw: any) => {
                 kw.history?.forEach((h: any) => {
-                    const date = new Date(h.date).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' })
-                    if (!dataMap.has(date)) {
-                        dataMap.set(date, { date })
+                    const dateObj = new Date(h.date)
+                    if (Number.isNaN(dateObj.getTime())) return
+
+                    // 로컬 날짜 기준으로 그룹핑
+                    const year = dateObj.getFullYear()
+                    const month = String(dateObj.getMonth() + 1).padStart(2, '0')
+                    const day = String(dateObj.getDate()).padStart(2, '0')
+                    const dateKey = `${year}-${month}-${day}`
+                    const dateLabel = dateObj.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' })
+
+                    if (!dataMap.has(dateKey)) {
+                        dataMap.set(dateKey, { date: dateKey, dateLabel })
                     }
-                    const entry = dataMap.get(date)
+                    const entry = dataMap.get(dateKey)
+                    if (!entry) return
                     entry[kw.keyword] = h.rank // 키워드명만 사용 (상품명 제외)
                 })
             })
         }
 
-        return Array.from(dataMap.values()).reverse().slice(0, period)
-    }, [ranksData, period, selectedProductId])
+        return Array.from(dataMap.values())
+            .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+            .slice(-period)
+    }, [ranksData, period, selectedProduct])
+
+    const chartKeys = useMemo(() => {
+        const keys = new Set<string>()
+        for (const row of chartData) {
+            for (const [key, value] of Object.entries(row)) {
+                if (key === 'date' || key === 'dateLabel') continue
+                if (typeof value === 'number') keys.add(key)
+            }
+        }
+        return Array.from(keys)
+    }, [chartData])
 
     // 통계 계산 (선택된 상품만)
     const stats = useMemo(() => {
@@ -62,7 +87,7 @@ export function RankAnalysisContent({ ranksData, products }: { ranksData: any, p
             worst: ranks.length > 0 ? Math.max(...ranks) : 0,
             keywords: keywordCount
         }
-    }, [ranksData, selectedProductId])
+    }, [ranksData, selectedProduct])
 
     const colors = ['#03c95c', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316']
 
@@ -157,7 +182,7 @@ export function RankAnalysisContent({ ranksData, products }: { ranksData: any, p
                         <div className="flex items-center justify-between mb-8">
                             <h3 className="text-xl font-black flex items-center gap-2">
                                 <span className="w-1.5 h-6 bg-[#03c95c] rounded-full"></span>
-                                {selectedProduct?.name || '상품을 선택하세요'}
+                                {selectedProduct?.productName || '상품을 선택하세요'}
                             </h3>
                             {/* <div className="text-sm font-bold text-[#64748b]">최근 {period}일 데이터</div> */}
                         </div>
@@ -167,7 +192,7 @@ export function RankAnalysisContent({ ranksData, products }: { ranksData: any, p
                                 <LineChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
                                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
                                     <XAxis
-                                        dataKey="date"
+                                        dataKey="dateLabel"
                                         stroke="#94a3b8"
                                         style={{ fontSize: '12px', fontWeight: 'bold' }}
                                         tickLine={false}
@@ -199,11 +224,12 @@ export function RankAnalysisContent({ ranksData, products }: { ranksData: any, p
                                         iconType="circle"
                                         formatter={(value) => <span className="text-[#475569] font-bold text-sm ml-1">{value}</span>}
                                     />
-                                    {Object.keys(chartData[0] || {}).filter(k => k !== 'date').map((key, i) => (
+                                    {chartKeys.map((key, i) => (
                                         <Line
                                             key={key}
                                             type="monotone"
                                             dataKey={key}
+                                            connectNulls={false}
                                             stroke={colors[i % colors.length]}
                                             strokeWidth={3}
                                             dot={{ r: 4, strokeWidth: 2, fill: '#fff' }}

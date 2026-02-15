@@ -3,7 +3,7 @@
 const MAX_PAGES = 10
 const DISPLAY_COUNT = 100
 const MAX_RANK = 1000
-const MAX_RETRIES = 2
+const MAX_RETRIES = 1
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504])
 
 function sleep(ms: number) {
@@ -11,8 +11,8 @@ function sleep(ms: number) {
 }
 
 function getRequestTimeoutMs(): number {
-    const parsed = Number(process.env.NAVER_API_TIMEOUT_MS ?? 5000)
-    if (!Number.isFinite(parsed)) return 5000
+    const parsed = Number(process.env.NAVER_API_TIMEOUT_MS ?? 3500)
+    if (!Number.isFinite(parsed)) return 3500
 
     return Math.max(1000, Math.floor(parsed))
 }

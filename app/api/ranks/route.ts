@@ -8,9 +8,12 @@ import { searchProductRank } from '@/lib/naver-api'
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
-const DEFAULT_REFRESH_CONCURRENCY = 4
+const DEFAULT_REFRESH_CONCURRENCY = 6
 const MAX_REFRESH_CONCURRENCY = 10
 const RANK_HISTORY_BATCH_SIZE = 500
+const HISTORY_LOOKBACK_DAYS = 120
+const MAX_HISTORY_ROWS_PER_PRODUCT = 2000
+const MAX_DAILY_HISTORY_POINTS = 120
 
 type RankRefreshTask = {
     productDbId: string
@@ -22,6 +25,56 @@ type RankRefreshTask = {
 type RankRefreshResult = RankRefreshTask & {
     rank: number | null
     ok: boolean
+}
+
+type KeywordHistoryRow = {
+    keyword: string
+    rank: number | null
+    createdAt: Date
+}
+
+function getHistoryCutoffDate() {
+    return new Date(Date.now() - HISTORY_LOOKBACK_DAYS * 24 * 60 * 60 * 1000)
+}
+
+function toLocalDateKey(date: Date): string {
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+}
+
+function groupHistoryByKeyword(rows: KeywordHistoryRow[]): Map<string, KeywordHistoryRow[]> {
+    const map = new Map<string, KeywordHistoryRow[]>()
+    for (const row of rows) {
+        const list = map.get(row.keyword)
+        if (list) {
+            list.push(row)
+        } else {
+            map.set(row.keyword, [row])
+        }
+    }
+    return map
+}
+
+function buildDailyHistory(rows: KeywordHistoryRow[]) {
+    const seen = new Set<string>()
+    const daily: { rank: number | null, date: Date }[] = []
+
+    for (const row of rows) {
+        const key = toLocalDateKey(row.createdAt)
+        if (seen.has(key)) continue
+
+        seen.add(key)
+        daily.push({
+            rank: row.rank,
+            date: row.createdAt,
+        })
+
+        if (daily.length >= MAX_DAILY_HISTORY_POINTS) break
+    }
+
+    return daily.reverse()
 }
 
 function getRefreshConcurrency(): number {
@@ -69,6 +122,7 @@ export async function GET(req: Request) {
     // 로그인하지 않은 경우에도 읽기 전용으로 데이터 제공
     const { searchParams } = new URL(req.url)
     const productId = searchParams.get('productId')
+    const historyCutoffDate = getHistoryCutoffDate()
 
     try {
         // 특정 상품의 순위 조회
@@ -78,8 +132,11 @@ export async function GET(req: Request) {
                 include: {
                     keywords: true,
                     rankHistory: {
+                        where: {
+                            createdAt: { gte: historyCutoffDate },
+                        },
                         orderBy: { createdAt: 'desc' },
-                        take: 100, // 최근 100개 (키워드별로 나눠짐)
+                        take: MAX_HISTORY_ROWS_PER_PRODUCT,
                     },
                 },
             })
@@ -89,27 +146,21 @@ export async function GET(req: Request) {
             }
 
             // 키워드별 최신 순위 및 7일 히스토리 구성
+            const keywordHistoryMap = groupHistoryByKeyword(product.rankHistory)
             const keywordRanks = product.keywords.map(keyword => {
-                // 해당 키워드의 순위 히스토리
-                const history = product.rankHistory
-                    .filter(h => h.keyword === keyword.keyword)
-                    .slice(0, 7)
-                    .reverse() // 오래된 것부터 정렬
-
-                const latestRank = history[history.length - 1]
-                const previousRank = history[history.length - 2]
+                const keywordHistory = keywordHistoryMap.get(keyword.keyword) || []
+                const latestRank = keywordHistory[0]
+                const previousRank = keywordHistory[1]
+                const history = buildDailyHistory(keywordHistory)
 
                 return {
                     keyword: keyword.keyword,
-                    currentRank: latestRank?.rank || null,
-                    previousRank: previousRank?.rank || null,
+                    currentRank: latestRank?.rank ?? null,
+                    previousRank: previousRank?.rank ?? null,
                     delta: latestRank?.rank != null && previousRank?.rank != null
                         ? previousRank.rank - latestRank.rank
                         : null,
-                    history: history.map(h => ({
-                        rank: h.rank,
-                        date: h.createdAt,
-                    })),
+                    history,
                 }
             })
 
@@ -128,31 +179,30 @@ export async function GET(req: Request) {
             include: {
                 keywords: true,
                 rankHistory: {
+                    where: {
+                        createdAt: { gte: historyCutoffDate },
+                    },
                     orderBy: { createdAt: 'desc' },
+                    take: MAX_HISTORY_ROWS_PER_PRODUCT,
                 },
             },
         })
 
         const result = products.map(product => {
+            const keywordHistoryMap = groupHistoryByKeyword(product.rankHistory)
             const keywordRanks = product.keywords.map(keyword => {
-                const latestHistory = product.rankHistory.find(h => h.keyword === keyword.keyword)
-                const allHistory = product.rankHistory
-                    .filter(h => h.keyword === keyword.keyword)
-                    .slice(0, 7)
-                    .reverse()
-
-                const previousRank = allHistory[allHistory.length - 2]
+                const keywordHistory = keywordHistoryMap.get(keyword.keyword) || []
+                const latestHistory = keywordHistory[0]
+                const previousRank = keywordHistory[1]
+                const history = buildDailyHistory(keywordHistory)
 
                 return {
                     keyword: keyword.keyword,
-                    currentRank: latestHistory?.rank || null,
+                    currentRank: latestHistory?.rank ?? null,
                     delta: latestHistory?.rank != null && previousRank?.rank != null
                         ? previousRank.rank - latestHistory.rank
                         : null,
-                    history: allHistory.map(h => ({
-                        rank: h.rank,
-                        date: h.createdAt,
-                    })),
+                    history,
                 }
             })
 
