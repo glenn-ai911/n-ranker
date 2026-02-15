@@ -8,6 +8,63 @@ import { searchProductRank } from '@/lib/naver-api'
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
+const DEFAULT_REFRESH_CONCURRENCY = 4
+const MAX_REFRESH_CONCURRENCY = 10
+const RANK_HISTORY_BATCH_SIZE = 500
+
+type RankRefreshTask = {
+    productDbId: string
+    productId: string
+    productName: string
+    keyword: string
+}
+
+type RankRefreshResult = RankRefreshTask & {
+    rank: number | null
+    ok: boolean
+}
+
+function getRefreshConcurrency(): number {
+    const parsed = Number(process.env.RANK_REFRESH_CONCURRENCY ?? DEFAULT_REFRESH_CONCURRENCY)
+    if (!Number.isFinite(parsed)) return DEFAULT_REFRESH_CONCURRENCY
+
+    const normalized = Math.floor(parsed)
+    return Math.min(MAX_REFRESH_CONCURRENCY, Math.max(1, normalized))
+}
+
+async function runWithConcurrency<T, R>(
+    items: T[],
+    concurrency: number,
+    worker: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+    const results = new Array<R>(items.length)
+    let nextIndex = 0
+
+    const runner = async () => {
+        while (true) {
+            const currentIndex = nextIndex++
+            if (currentIndex >= items.length) break
+            results[currentIndex] = await worker(items[currentIndex], currentIndex)
+        }
+    }
+
+    const workers = Array.from(
+        { length: Math.min(concurrency, items.length) },
+        () => runner()
+    )
+
+    await Promise.all(workers)
+    return results
+}
+
+async function insertRankHistoryBatch(rows: { productId: string, keyword: string, rank: number | null }[]) {
+    for (let i = 0; i < rows.length; i += RANK_HISTORY_BATCH_SIZE) {
+        await prisma.rankHistory.createMany({
+            data: rows.slice(i, i + RANK_HISTORY_BATCH_SIZE),
+        })
+    }
+}
+
 export async function GET(req: Request) {
     // 로그인하지 않은 경우에도 읽기 전용으로 데이터 제공
     const { searchParams } = new URL(req.url)
@@ -145,99 +202,76 @@ export async function POST(_req: Request) {
 
         // 공용 대시보드 기준으로 전체 상품 순위를 갱신한다.
         const products = await prisma.product.findMany({
-            include: { keywords: true },
+            include: { keywords: true }
         })
 
         if (products.length === 0) {
             return NextResponse.json({ error: '등록된 상품이 없습니다' }, { status: 400 })
         }
 
-        const rankTasks = products.flatMap((product) =>
-            product.keywords.map((keyword) => ({
-                productId: product.id,
-                productNumber: product.productId,
+        const tasks: RankRefreshTask[] = products.flatMap(product =>
+            product.keywords.map(keyword => ({
+                productDbId: product.id,
+                productId: product.productId,
+                productName: product.productName,
                 keyword: keyword.keyword,
             }))
         )
 
-        const envConcurrency = Number.parseInt(process.env.RANK_REFRESH_CONCURRENCY || '4', 10)
-        const concurrency = Number.isFinite(envConcurrency) && envConcurrency > 0
-            ? Math.min(envConcurrency, 10)
-            : 4
-        const pageDelayMs = Math.max(
-            0,
-            Number.parseInt(process.env.RANK_PAGE_DELAY_MS || '30', 10) || 0
-        )
+        if (tasks.length === 0) {
+            return NextResponse.json({ error: '등록된 키워드가 없습니다' }, { status: 400 })
+        }
+
         const now = new Date()
         const startedAt = Date.now()
-        let pointer = 0
-        let successCount = 0
-        let failedCount = 0
-        const rankWrites: { productId: string; keyword: string; rank: number }[] = []
+        const concurrency = getRefreshConcurrency()
 
-        const worker = async () => {
-            const localWrites: { productId: string; keyword: string; rank: number }[] = []
-            let localSuccess = 0
-            let localFailed = 0
+        const results = await runWithConcurrency(tasks, concurrency, async (task): Promise<RankRefreshResult> => {
+            try {
+                const rank = await searchProductRank(
+                    task.keyword,
+                    task.productId,
+                    apiConfig.naverClientId,
+                    apiConfig.naverClientSecret
+                )
 
-            while (true) {
-                const index = pointer++
-                const task = rankTasks[index]
-                if (!task) break
-
-                try {
-                    const rank = await searchProductRank(
-                        task.keyword,
-                        task.productNumber,
-                        apiConfig.naverClientId,
-                        apiConfig.naverClientSecret,
-                        { pageDelayMs }
-                    )
-
-                    if (rank !== null) {
-                        localWrites.push({
-                            productId: task.productId,
-                            keyword: task.keyword,
-                            rank,
-                        })
-                        localSuccess++
-                    } else {
-                        localFailed++
-                    }
-                } catch (error) {
-                    console.error(`[순위 갱신 에러] ${task.productNumber} - ${task.keyword}:`, error)
-                    localFailed++
-                }
+                return { ...task, rank, ok: true }
+            } catch (error) {
+                console.error(`[순위 갱신 에러] ${task.productName} - ${task.keyword}:`, error)
+                return { ...task, rank: null, ok: false }
             }
+        })
 
-            rankWrites.push(...localWrites)
-            successCount += localSuccess
-            failedCount += localFailed
-        }
+        await insertRankHistoryBatch(
+            results.map(result => ({
+                productId: result.productDbId,
+                keyword: result.keyword,
+                rank: result.rank,
+            }))
+        )
 
-        const workerCount = Math.max(1, Math.min(concurrency, rankTasks.length || 1))
-        await Promise.all(Array.from({ length: workerCount }, () => worker()))
-
-        if (rankWrites.length > 0) {
-            const BATCH_SIZE = 200
-            for (let i = 0; i < rankWrites.length; i += BATCH_SIZE) {
-                const batch = rankWrites.slice(i, i + BATCH_SIZE)
-                await prisma.rankHistory.createMany({
-                    data: batch,
-                })
-            }
-        }
-
-        const updatedCount = rankTasks.length
+        const updatedCount = results.length
+        const successCount = results.filter(result => result.rank !== null).length
+        const requestFailedCount = results.filter(result => !result.ok).length
+        const notRankedCount = updatedCount - successCount
+        const durationMs = Date.now() - startedAt
 
         return NextResponse.json({
             success: true,
-            message: `${products.length}개 상품, ${successCount}/${updatedCount}개 키워드 순위 갱신 완료`,
-            totalTasks: rankTasks.length,
+            message: `${products.length}개 상품, ${updatedCount}개 키워드 갱신 완료 (순위 확인 ${successCount}개, 미노출 ${notRankedCount}개)`,
+            totalTasks: updatedCount,
             successCount,
-            failedCount,
-            durationMs: Date.now() - startedAt,
-            updatedAt: now.toISOString()
+            failedCount: notRankedCount,
+            durationMs,
+            updatedAt: now.toISOString(),
+            stats: {
+                productCount: products.length,
+                keywordCount: updatedCount,
+                rankedCount: successCount,
+                notFoundCount: notRankedCount,
+                failedCount: requestFailedCount,
+                concurrency,
+            },
         })
     } catch (error) {
         console.error('Error refreshing ranks:', error)

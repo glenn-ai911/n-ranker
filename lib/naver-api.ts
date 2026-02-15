@@ -1,57 +1,97 @@
 // 네이버 API 클라이언트 라이브러리
 
-type SearchProductRankOptions = {
-    maxPages?: number
-    displayCount?: number
-    pageDelayMs?: number
+const MAX_PAGES = 10
+const DISPLAY_COUNT = 100
+const MAX_RANK = 1000
+const MAX_RETRIES = 2
+const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504])
+
+function sleep(ms: number) {
+    return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function getRequestTimeoutMs(): number {
+    const parsed = Number(process.env.NAVER_API_TIMEOUT_MS ?? 5000)
+    if (!Number.isFinite(parsed)) return 5000
+
+    return Math.max(1000, Math.floor(parsed))
+}
+
+async function fetchWithRetry(
+    url: string,
+    headers: Record<string, string>
+): Promise<Response> {
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), getRequestTimeoutMs())
+
+        try {
+            const response = await fetch(url, {
+                headers,
+                signal: controller.signal,
+            })
+
+            if (response.ok) return response
+
+            const shouldRetry = RETRYABLE_STATUS.has(response.status) && attempt < MAX_RETRIES
+            if (!shouldRetry) {
+                throw new Error(`Naver API error: ${response.status}`)
+            }
+        } catch (error) {
+            const canRetry = attempt < MAX_RETRIES
+            if (!canRetry) throw error
+        } finally {
+            clearTimeout(timeoutId)
+        }
+
+        await sleep(200 * (attempt + 1))
+    }
+
+    throw new Error('Naver API request failed after retries')
 }
 
 export async function searchProductRank(
     keyword: string,
     productId: string,
     clientId: string,
-    clientSecret: string,
-    options: SearchProductRankOptions = {}
+    clientSecret: string
 ): Promise<number | null> {
     try {
         const encodedKeyword = encodeURIComponent(keyword)
         const targetId = String(productId)
-        const maxPages = options.maxPages ?? 10
-        const displayCount = options.displayCount ?? 100
-        const pageDelayMs = options.pageDelayMs ?? 100
 
-        console.log(`[순위 조회] 키워드: ${keyword}, 상품ID: ${productId}`)
+        const headers = {
+            'X-Naver-Client-Id': clientId,
+            'X-Naver-Client-Secret': clientSecret,
+        }
 
-        // 네이버 쇼핑 API는 start=1~1000, display=1~100 지원
-        // 1000위까지 조회하려면 10번 페이징 필요
-        for (let page = 0; page < maxPages; page++) {
-            const start = page * displayCount + 1
-            const url = `https://openapi.naver.com/v1/search/shop.json?query=${encodedKeyword}&display=${displayCount}&start=${start}&sort=sim`
+        let pageLimit = MAX_PAGES
 
-            const response = await fetch(url, {
-                headers: {
-                    'X-Naver-Client-Id': clientId,
-                    'X-Naver-Client-Secret': clientSecret,
-                },
-            })
+        for (let page = 0; page < pageLimit; page++) {
+            const start = page * DISPLAY_COUNT + 1
+            const url = `https://openapi.naver.com/v1/search/shop.json?query=${encodedKeyword}&display=${DISPLAY_COUNT}&start=${start}&sort=sim`
 
-            if (!response.ok) {
-                console.error(`[순위 조회 에러] API 응답 실패: ${response.status}`)
-                throw new Error(`Naver API error: ${response.status}`)
-            }
+            const response = await fetchWithRetry(url, headers)
 
             const data = await response.json()
-            const items = data.items || []
+            const items = Array.isArray(data?.items) ? data.items : []
+            const total = typeof data?.total === 'number' ? data.total : MAX_RANK
 
-            console.log(`[순위 조회] 페이지 ${page + 1}, 시작: ${start}, 결과: ${items.length}개`)
+            pageLimit = Math.max(
+                1,
+                Math.min(
+                    MAX_PAGES,
+                    Math.ceil(Math.min(total, MAX_RANK) / DISPLAY_COUNT)
+                )
+            )
 
             // 상품 ID로 순위 찾기 (productId, mallProductId, link URL 모두 확인)
             const indexInPage = items.findIndex((item: any) => {
-                const itemProductId = String(item.productId || '')
-                const itemMallProductId = String(item.mallProductId || '')
+                const itemProductId = String(item?.productId || '')
+                const itemMallProductId = String(item?.mallProductId || '')
 
                 // link URL에서 스마트스토어 상품 ID 추출 시도
-                const linkMatch = item.link?.match(/\/products\/(\d+)/)
+                const linkMatch = String(item?.link || '').match(/\/products\/(\d+)/)
                 const linkProductId = linkMatch ? linkMatch[1] : ''
 
                 return itemProductId === targetId ||
@@ -61,30 +101,18 @@ export async function searchProductRank(
 
             if (indexInPage >= 0) {
                 const actualRank = start + indexInPage
-                const foundItem = items[indexInPage]
-                console.log(`[순위 조회] 상품 발견! 순위: ${actualRank}위`)
-                console.log(`[순위 조회] 매칭 정보 - productId: ${foundItem.productId}, mallProductId: ${foundItem.mallProductId || 'N/A'}`)
                 return actualRank
             }
 
             // 결과가 100개 미만이면 더 이상 결과 없음
-            if (items.length < displayCount) {
-                console.log(`[순위 조회] 모든 결과 확인 완료 (총 ${start + items.length - 1}개)`)
-                // 첫 페이지에서 못 찾았을 때 디버깅 정보 출력
-                if (page === 0 && items.length > 0) {
-                    console.log(`[순위 조회] 첫 상품 샘플 - productId: ${items[0].productId}, mallProductId: ${items[0].mallProductId || 'N/A'}`)
-                }
+            if (items.length < DISPLAY_COUNT || page + 1 >= pageLimit) {
                 break
             }
-
-            // API 호출 간격 (Rate limit 방지)
-            await new Promise(resolve => setTimeout(resolve, pageDelayMs))
         }
 
-        console.log(`[순위 조회] 상품을 1000위 안에서 찾을 수 없음`)
         return null
     } catch (error) {
-        console.error('Error searching product rank:', error)
+        console.error(`[순위 조회 에러] keyword=${keyword}, productId=${productId}`, error)
         return null
     }
 }
